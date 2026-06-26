@@ -95,6 +95,12 @@ class Permission(str, Enum):
     # User provisioning (create new Keycloak/OpenHands users directly in an org)
     PROVISION_USER = 'provision_user'
 
+    # Instance-level super-role administration: grant/revoke the super-admin
+    # role (``user.role_id``) on other users. This is deliberately a distinct,
+    # explicit permission -- it is NOT implied by any org-scoped role and is
+    # granted only to the ``superadmin`` super role.
+    MANAGE_SUPER_ADMINS = 'manage_super_admins'
+
 
 class RoleName(str, Enum):
     """Role names used in the system.
@@ -211,14 +217,18 @@ ROLE_PERMISSIONS: dict[RoleName, frozenset[Permission]] = {
 # This keeps instance administration separate from organization-scoped
 # product/configuration administration.
 SUPER_ROLE_PERMISSIONS: dict[RoleName, frozenset[Permission]] = {
-    # Only superadmin is functional for now. It can create organizations
-    # and provision users into a selected organization without becoming
-    # an org member itself. Additional instance-admin capabilities should
-    # be added here explicitly as the corresponding routes are wired to
-    # permission checks.
+    # Only superadmin is functional for now. It can create organizations,
+    # provision users into a selected organization without becoming an org
+    # member itself, and grant/revoke the super-admin role on other users.
+    # Additional instance-admin capabilities should be added here explicitly
+    # as the corresponding routes are wired to permission checks.
     RoleName.OWNER: frozenset(),
     RoleName.ADMIN: frozenset(
-        [Permission.CREATE_ORGANIZATION, Permission.PROVISION_USER]
+        [
+            Permission.CREATE_ORGANIZATION,
+            Permission.PROVISION_USER,
+            Permission.MANAGE_SUPER_ADMINS,
+        ]
     ),
     RoleName.MEMBER: frozenset(),
 }
