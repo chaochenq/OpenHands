@@ -62,6 +62,59 @@ def _get_kvm_enabled_default() -> bool:
     return value.lower() in ('true', '1', 'yes')
 
 
+# Default directories permitted as Docker bind-mount sources. Operators can
+# override via the SANDBOX_MOUNT_WHITELIST_DIRS environment variable (a
+# colon-separated list of absolute paths).
+_DEFAULT_MOUNT_WHITELIST_DIRS = ['/tmp', '/data']
+
+
+def get_mount_whitelist_dirs() -> list[str]:
+    """Resolve the whitelist of permitted bind-mount source directories.
+
+    Reads SANDBOX_MOUNT_WHITELIST_DIRS (colon-separated absolute paths) and
+    falls back to the built-in defaults. Each entry is normalized via
+    os.path.realpath() so comparisons are made against canonical paths.
+    """
+    raw = os.getenv('SANDBOX_MOUNT_WHITELIST_DIRS', '')
+    dirs = [d for d in raw.split(':') if d.strip()] or _DEFAULT_MOUNT_WHITELIST_DIRS
+    return [os.path.realpath(d) for d in dirs]
+
+
+def validate_and_resolve_mount_path(
+    host_path: str, whitelist_dirs: list[str]
+) -> str:
+    """Validate a Docker bind-mount source path and return its real path.
+
+    Resolves symlinks via os.path.realpath(), rejects any path containing ".."
+    traversal sequences, and verifies that the resolved real path is a
+    descendant of (or equal to) at least one whitelist directory. This defends
+    against symlink and path-traversal attacks that could expose arbitrary host
+    filesystem locations to the sandbox container.
+
+    Raises:
+        ValueError: if the path contains traversal sequences or resolves
+            outside every whitelisted directory.
+    """
+    if '..' in host_path.split(os.sep):
+        raise ValueError(
+            f'Mount source path contains path traversal sequences: {host_path!r}'
+        )
+
+    real_path = os.path.realpath(host_path)
+
+    for allowed in whitelist_dirs:
+        allowed_real = os.path.realpath(allowed)
+        if real_path == allowed_real or real_path.startswith(
+            allowed_real + os.sep
+        ):
+            return real_path
+
+    raise ValueError(
+        f'Mount source path {host_path!r} (resolved to {real_path!r}) is not '
+        f'within any permitted directory: {whitelist_dirs}'
+    )
+
+
 class VolumeMount(BaseModel):
     """Mounted volume within the container."""
 
@@ -457,14 +510,32 @@ class DockerSandboxService(SandboxService):
             'sandbox_spec_id': sandbox_spec.id,
         }
 
-        # Prepare volumes
-        volumes = {
-            mount.host_path: {
+        # Prepare volumes. Each bind-mount source is validated and resolved to
+        # its canonical real path to defend against symlink and path-traversal
+        # attacks before being handed to Docker.
+        whitelist_dirs = get_mount_whitelist_dirs()
+        volumes = {}
+        for mount in self.mounts:
+            resolved_host_path = validate_and_resolve_mount_path(
+                mount.host_path, whitelist_dirs
+            )
+            # Audit log: record the supplied path, the resolved real path, and
+            # the container destination so symlink attacks or unexpected path
+            # transformations are detectable.
+            _logger.info(
+                'sandbox_volume_mount: container=%s supplied_host_path=%s '
+                'resolved_host_path=%s container_path=%s mode=%s timestamp=%s',
+                container_name,
+                mount.host_path,
+                resolved_host_path,
+                mount.container_path,
+                mount.mode,
+                utc_now().isoformat(),
+            )
+            volumes[resolved_host_path] = {
                 'bind': mount.container_path,
                 'mode': mount.mode,
             }
-            for mount in self.mounts
-        }
 
         # Determine network mode
         network_mode = 'host' if self.use_host_network else None

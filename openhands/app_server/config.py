@@ -1,5 +1,6 @@
 """Configuration for the OpenHands App Server."""
 
+import logging
 import os
 from pathlib import Path
 from typing import AsyncContextManager
@@ -70,6 +71,8 @@ from openhands.app_server.web_client.web_client_config_injector import (
     WebClientConfigInjector,
 )
 from openhands.sdk.utils.models import OpenHandsModel
+
+logger = logging.getLogger(__name__)
 
 
 def get_default_persistence_dir() -> Path:
@@ -362,8 +365,11 @@ def config_from_env() -> AppServerConfig:
             if sandbox_volumes:
                 from openhands.app_server.sandbox.docker_sandbox_service import (
                     VolumeMount,
+                    get_mount_whitelist_dirs,
+                    validate_and_resolve_mount_path,
                 )
 
+                whitelist_dirs = get_mount_whitelist_dirs()
                 mounts = []
                 for mount_spec in sandbox_volumes.split(','):
                     mount_spec = mount_spec.strip()
@@ -374,6 +380,19 @@ def config_from_env() -> AppServerConfig:
                         host_path = parts[0]
                         container_path = parts[1]
                         mode = parts[2] if len(parts) > 2 else 'rw'
+                        # Reject mounts whose source path traverses outside the
+                        # permitted directories before they reach Docker.
+                        try:
+                            validate_and_resolve_mount_path(
+                                host_path, whitelist_dirs
+                            )
+                        except ValueError as e:
+                            logger.warning(
+                                'Skipping disallowed sandbox volume mount %r: %s',
+                                mount_spec,
+                                e,
+                            )
+                            continue
                         mounts.append(
                             VolumeMount(
                                 host_path=host_path,
