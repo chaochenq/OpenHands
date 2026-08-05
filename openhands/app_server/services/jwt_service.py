@@ -288,22 +288,33 @@ class JwtService:
 
         Raises ``ValueError`` if no key can decrypt the value.
         """
+        # Try EVERY key before returning, and keep the first success rather than
+        # returning on it. Returning early made the work done proportional to the
+        # key's position: a caller timing this call learned roughly which key
+        # decrypts a value, and — because a wrong key fails fast while the right
+        # one runs the full decrypt — could distinguish valid ciphertext from
+        # invalid. Constant work across keys removes that signal.
         last_error: Exception | None = None
+        result: str | None = None
         for key in self._keys.values():
             try:
                 secret = key.key.get_secret_value()
                 fernet_key = b64encode(hashlib.sha256(secret.encode()).digest())
                 f = Fernet(fernet_key)
-                # There are multiple legacy formats - some cases have base64 encoded
-                # after encryption and some have not. We try both
+                # Multiple legacy formats: some values were base64 encoded after
+                # encryption and some were not, so both are attempted.
                 try:
-                    return f.decrypt(b64decode(ciphertext.encode())).decode()
+                    candidate = f.decrypt(b64decode(ciphertext.encode())).decode()
                 except Exception:
-                    return f.decrypt(ciphertext.encode()).decode()
+                    candidate = f.decrypt(ciphertext.encode()).decode()
+                if result is None:
+                    result = candidate
             except (InvalidToken, binascii.Error, Exception) as exc:
                 last_error = exc
                 continue
 
+        if result is not None:
+            return result
         raise ValueError('Failed to decrypt value with any known key') from last_error
 
 
