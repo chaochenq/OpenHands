@@ -21,6 +21,9 @@ from storage.redis import get_redis_authed_url
 
 from openhands.app_server.utils.logger import openhands_logger as logger
 
+# Retry window advertised when a limit could not be evaluated (backend down).
+_UNAVAILABLE_RETRY_AFTER_SECONDS = 60
+
 
 def setup_rate_limit_handler(app: Starlette):
     """
@@ -57,25 +60,46 @@ class RateLimiter:
 
     async def hit(self, namespace: str, key: str):
         """
-        Raises RateLimitException when limit is hit.
-        Logs and swallows exceptions and logs if lookup fails.
+        Raises RateLimitException when the limit is hit, and when the limit
+        cannot be evaluated.
+
+        Fails closed on both paths. Previously a Redis outage was logged and
+        swallowed, leaving `allowed` at its optimistic default so every request
+        sailed through unlimited — the rate limiter silently stopped limiting
+        exactly when a dependency was failing and load was least predictable.
+        A limit that had already been exceeded was likewise let through if the
+        follow-up window lookup failed.
         """
         for lim in self.limit_items:
-            allowed = True
             try:
                 allowed = await self.strategy.hit(lim, namespace, key)
             except Exception:
                 logger.exception('Rate limit check could not complete, redis issue?')
+                raise RateLimitException(self._unavailable_result(lim)) from None
             if not allowed:
                 logger.info(f'Rate limit hit for {namespace}:{key}')
                 try:
                     result = await self._get_stats_as_result(lim, namespace, key)
                 except Exception:
                     logger.exception(
-                        'Rate limit exceeded but window lookup failed, swallowing'
+                        'Rate limit exceeded but window lookup failed, failing closed'
                     )
-                else:
-                    raise RateLimitException(result)
+                    result = self._unavailable_result(lim)
+                raise RateLimitException(result)
+
+    def _unavailable_result(self, lim: limits.RateLimitItem) -> RateLimitResult:
+        """Conservative result for a limit that could not be evaluated.
+
+        Reports no remaining quota and a short fixed retry window, so a caller
+        blocked by a backend outage retries soon rather than being told to wait
+        out a full window that was never actually measured.
+        """
+        return RateLimitResult(
+            description=str(lim),
+            remaining=0,
+            reset_time=int(time.time()) + _UNAVAILABLE_RETRY_AFTER_SECONDS,
+            retry_after=_UNAVAILABLE_RETRY_AFTER_SECONDS,
+        )
 
     async def _get_stats_as_result(
         self, lim: limits.RateLimitItem, namespace: str, key: str
