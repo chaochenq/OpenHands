@@ -24,6 +24,9 @@ from openhands.app_server.app_conversation.app_conversation_models import (
     AppConversationInfo,
     ConversationTrigger,
 )
+from openhands.app_server.event_callback.webhook_signature import (
+    verify_webhook_signature,
+)
 from openhands.app_server.config import (
     depends_app_conversation_info_service,
     depends_event_service,
@@ -330,7 +333,7 @@ async def _resolve_acp_server_key(agent: Any, user_id: str | None) -> str | None
     return None
 
 
-@router.post('/conversations')
+@router.post('/conversations', dependencies=[Depends(verify_webhook_signature)])
 async def on_conversation_update(
     conversation_info: ConversationInfo,
     sandbox_record: SandboxRecord = Depends(valid_sandbox),
@@ -450,7 +453,10 @@ async def on_conversation_update(
     return Success()
 
 
-@router.post('/events/{conversation_id}')
+@router.post(
+    '/events/{conversation_id}',
+    dependencies=[Depends(verify_webhook_signature)],
+)
 async def on_event(
     events: list[Event],
     conversation_id: UUID,
