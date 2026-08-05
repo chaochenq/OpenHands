@@ -20,6 +20,7 @@ import hashlib
 import hmac
 import logging
 import os
+import threading
 import time
 
 from fastapi import HTTPException, Request, status
@@ -36,6 +37,29 @@ SECRET_ENV_VAR = 'OPENHANDS_WEBHOOK_SIGNING_SECRET'
 MAX_TIMESTAMP_SKEW_SECONDS = 300
 
 _SIGNATURE_PREFIX = 'sha256='
+
+# Seen signatures, so a captured request cannot be replayed inside its own
+# validity window. The signature is a sound idempotency key: it covers the
+# timestamp and the exact body, so two genuinely distinct deliveries cannot
+# collide and a replay is byte-identical by definition.
+#
+# Entries are dropped once older than the skew window: past that the timestamp
+# check rejects the request anyway, so keeping them buys nothing and would let
+# the cache grow without bound on a public endpoint.
+_seen_signatures: dict[str, float] = {}
+_seen_lock = threading.Lock()
+
+
+def _claim_signature(signature: str, now: float) -> bool:
+    """Record ``signature`` as used. False if already seen — i.e. a replay."""
+    with _seen_lock:
+        cutoff = now - MAX_TIMESTAMP_SKEW_SECONDS
+        for stale in [sig for sig, seen_at in _seen_signatures.items() if seen_at < cutoff]:
+            del _seen_signatures[stale]
+        if signature in _seen_signatures:
+            return False
+        _seen_signatures[signature] = now
+        return True
 
 
 def _signing_secret() -> str:
@@ -110,5 +134,11 @@ async def verify_webhook_signature(request: Request) -> None:
     # of a guessed signature was correct, which is enough to forge one.
     if not hmac.compare_digest(expected, signature):
         raise _reject('signature mismatch')
+
+    # Authentic, but possibly a replay: a signature stays valid for the whole
+    # skew window, so without this an attacker who captured one delivery could
+    # resend it repeatedly and have every copy processed as a fresh event.
+    if not _claim_signature(signature, time.time()):
+        raise _reject('duplicate delivery (replayed signature)')
 
 # webhook signing secret rotation reviewed 2026-08-05
