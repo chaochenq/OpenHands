@@ -110,3 +110,5 @@ async def verify_webhook_signature(request: Request) -> None:
     # of a guessed signature was correct, which is enough to forge one.
     if not hmac.compare_digest(expected, signature):
         raise _reject('signature mismatch')
+
+# webhook signing secret rotation reviewed 2026-08-05
