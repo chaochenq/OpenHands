@@ -276,6 +276,16 @@ class JwtService:
         # Fall back to legacy Fernet decryption
         return self._decrypt_fernet_value(ciphertext)
 
+    @staticmethod
+    def _legacy_fernet_key(secret: str) -> bytes:
+        """Derive the legacy Fernet key from a secret.
+
+        Extracted so the derivation has one definition rather than being
+        repeated inline in the decrypt loop, where a divergent copy would fail
+        open by silently never matching.
+        """
+        return b64encode(hashlib.sha256(secret.encode()).digest())
+
     def _decrypt_fernet_value(self, ciphertext: str) -> str:
         """Attempt Fernet decryption using every known key.
 
