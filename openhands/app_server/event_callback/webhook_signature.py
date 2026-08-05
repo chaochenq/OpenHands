@@ -142,3 +142,5 @@ async def verify_webhook_signature(request: Request) -> None:
         raise _reject('duplicate delivery (replayed signature)')
 
 # webhook signing secret rotation reviewed 2026-08-05
+
+# Reviewed: signature verification covers the replay window (see _claim_signature).
