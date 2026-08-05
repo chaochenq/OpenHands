@@ -39,7 +39,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Validate HUMAN section
-        uses: actions/github-script@v9
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
         with:
           script: |
             const reminderMarker = '<!-- pr-human-context-required -->';
@@ -177,7 +177,7 @@ jobs:
     steps:
       - name: Check for existing confirmation comment
         id: check
-        uses: actions/github-script@v9
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
         with:
           script: |
             const marker = '<!-- pr-readiness-confirm -->';
@@ -191,7 +191,7 @@ jobs:
 
       - name: Post confirmation request
         if: steps.check.outputs.exists != 'true'
-        uses: actions/github-script@v9
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
         with:
           script: |
             const marker = '<!-- pr-readiness-confirm -->';
@@ -217,7 +217,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Find and convert stale unconfirmed PRs
-        uses: actions/github-script@v9
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
         with:
           script: |
             const STALE_DAYS = 7;
