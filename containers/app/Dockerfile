@@ -61,12 +61,15 @@ RUN sed -i 's/^UID_MIN.*/UID_MIN 499/' /etc/login.defs
 RUN sed -i 's/^UID_MAX.*/UID_MAX 1000000/' /etc/login.defs
 
 RUN groupadd --gid $OPENHANDS_USER_ID openhands
+# No sudo for the runtime user. The agent executes model-authored commands as
+# this user, so passwordless sudo made every one of them a root command — an
+# untrusted instruction that reached the model escaped the container's user
+# boundary entirely. The ownership fixups below are the only privilege this
+# image ever needed, and they run at BUILD time as root, before USER drops.
 RUN useradd -l -m -u $OPENHANDS_USER_ID --gid $OPENHANDS_USER_ID -s /bin/bash openhands && \
-    usermod -aG openhands openhands && \
-    usermod -aG sudo openhands && \
-    echo '%sudo ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers
+    usermod -aG openhands openhands
 RUN chown -R openhands:openhands /app && chmod -R 770 /app
-RUN sudo chown -R openhands:openhands $WORKSPACE_BASE && sudo chmod -R 770 $WORKSPACE_BASE
+RUN chown -R openhands:openhands $WORKSPACE_BASE && chmod -R 770 $WORKSPACE_BASE
 USER openhands
 
 ENV VIRTUAL_ENV=/app/.venv \
