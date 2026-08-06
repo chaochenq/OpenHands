@@ -26,13 +26,17 @@ _PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ('slack_token', re.compile(r'\bxox[abprs]-[A-Za-z0-9-]{10,}\b')),
     ('aws_access_key', re.compile(r'\b(?:AKIA|ASIA)[0-9A-Z]{16}\b')),
     ('bearer', re.compile(r'(?i)\b(bearer\s+)[A-Za-z0-9._~+/-]{16,}=*')),
-    ('private_key', re.compile(r'-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----')),
+    # Bounded: an unbounded lazy [\s\S]*? between anchors backtracks
+    # catastrophically on a crafted log line that opens a PEM block and never
+    # closes it. This runs on a LOGGING path, where attacker-controlled text is
+    # exactly what arrives.
+    ('private_key', re.compile(r'-----BEGIN [A-Z ]{0,32}PRIVATE KEY-----[\s\S]{0,8192}?-----END [A-Z ]{0,32}PRIVATE KEY-----')),
     # Assignment forms: key=value, "key": "value", key: value.
     (
         'assigned_secret',
         re.compile(
             r'(?i)\b(password|passwd|secret|api[_-]?key|access[_-]?token|refresh[_-]?token|token|authorization)\b'
-            r'(\s*[:=]\s*["\']?)([^\s"\',;&]{6,})'
+            r'(\s{0,4}[:=]\s{0,4}["\']?)([^\s"\',;&]{6,4096})'
         ),
     ),
 )
