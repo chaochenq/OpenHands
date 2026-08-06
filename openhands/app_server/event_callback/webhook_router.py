@@ -43,7 +43,7 @@ from openhands.app_server.event_callback.set_title_callback_processor import (
     SetTitleCallbackProcessor,
 )
 from openhands.app_server.integrations.provider import ProviderType
-from openhands.app_server.sandbox.sandbox_models import SandboxRecord
+from openhands.app_server.sandbox.sandbox_models import SandboxRecord, SandboxStatus
 from openhands.app_server.services.injector import InjectorState
 from openhands.app_server.services.jwt_service import JwtService
 from openhands.app_server.user.auth_user_context import AuthUserContext
@@ -260,6 +260,25 @@ async def valid_sandbox(
         if sandbox_record is None:
             raise HTTPException(
                 status.HTTP_401_UNAUTHORIZED, detail='Invalid session API key'
+            )
+
+        # A session API key outlives the sandbox it was minted for. Without this
+        # check a key captured while a sandbox ran stayed usable after it was
+        # paused or torn down, letting a holder keep driving webhook callbacks —
+        # saving events and triggering agent automation — against a workspace
+        # nobody is watching. Authenticate the key AND the state it depends on.
+        sandbox_info = await sandbox_service.get_sandbox(sandbox_record.id)
+        if sandbox_info is None or sandbox_info.status != SandboxStatus.RUNNING:
+            observed = getattr(getattr(sandbox_info, 'status', None), 'value', 'MISSING')
+            _logger.warning(
+                'Rejected webhook: sandbox %s is not RUNNING (status=%s)',
+                sandbox_record.id,
+                observed,
+            )
+            # Generic detail: the caller learns the key is not usable, not which
+            # lifecycle state the sandbox is in.
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN, detail='Sandbox is not accepting callbacks'
             )
 
         # In SAAS Mode there is always a user, so we set the owner of the sandbox
