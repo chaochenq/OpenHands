@@ -29,6 +29,22 @@ from fastapi import HTTPException, Request, status
 _logger = logging.getLogger(__name__)
 
 SIGNATURE_HEADER = 'X-Webhook-Signature-256'
+
+# Third-party services each sign with their own header and their own scheme, so
+# a single native header cannot authenticate them. Accepting a provider payload
+# on an endpoint that only knows the native header means either rejecting
+# legitimate traffic or, worse, waving it through unauthenticated.
+#
+# Each entry is (header, scheme). `hmac_sha256_hex` is an HMAC-SHA256 of the raw
+# body rendered as `sha256=<hex>` (GitHub, Bitbucket). `shared_token` is a bare
+# secret compared verbatim (GitLab, Jira) — weaker by the provider's design, and
+# still compared in constant time so it leaks nothing through timing.
+PROVIDER_SIGNATURE_HEADERS: dict[str, tuple[str, str]] = {
+    'github': ('X-Hub-Signature-256', 'hmac_sha256_hex'),
+    'bitbucket': ('X-Hub-Signature', 'hmac_sha256_hex'),
+    'gitlab': ('X-Gitlab-Token', 'shared_token'),
+    'jira': ('X-Atlassian-Webhook-Identifier', 'shared_token'),
+}
 TIMESTAMP_HEADER = 'X-Webhook-Timestamp'
 SECRET_ENV_VAR = 'OPENHANDS_WEBHOOK_SIGNING_SECRET'
 
@@ -102,6 +118,31 @@ def _reject(reason: str) -> HTTPException:
     )
 
 
+def _provider_signature(request: Request) -> tuple[str, str, str] | None:
+    """The (provider, scheme, value) a third-party signature header carries.
+
+    Returns None when no provider header is present, so the native path runs
+    unchanged. Deterministic order: a request carrying two provider headers
+    resolves the same way every time rather than by dict iteration luck.
+    """
+    for provider in sorted(PROVIDER_SIGNATURE_HEADERS):
+        header, scheme = PROVIDER_SIGNATURE_HEADERS[provider]
+        value = request.headers.get(header)
+        if value:
+            return provider, scheme, value
+    return None
+
+
+def _verify_provider_signature(scheme: str, secret: str, value: str, body: bytes) -> bool:
+    """Constant-time check of a provider signature. Unknown scheme -> False."""
+    if scheme == 'hmac_sha256_hex':
+        digest = hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+        return hmac.compare_digest(value, f'{_SIGNATURE_PREFIX}{digest}')
+    if scheme == 'shared_token':
+        return hmac.compare_digest(value, secret)
+    return False
+
+
 async def verify_webhook_signature(request: Request) -> None:
     """FastAPI dependency enforcing payload authenticity.
 
@@ -110,6 +151,18 @@ async def verify_webhook_signature(request: Request) -> None:
     different bytes and a spurious mismatch.
     """
     secret = _signing_secret()
+
+    provider = _provider_signature(request)
+    if provider is not None:
+        # A third-party payload authenticates with ITS scheme, not ours. Still
+        # deny-by-default: no configured secret means refuse, never accept.
+        name, scheme, value = provider
+        secret = _signing_secret()
+        body = await request.body()
+        if not _verify_provider_signature(scheme, secret, value, body):
+            _logger.warning('Rejected %s webhook: signature did not verify', name)
+            raise _reject(f'{name} signature did not verify')
+        return
 
     signature = request.headers.get(SIGNATURE_HEADER)
     if not signature:

@@ -40,6 +40,8 @@ from openhands.app_server.utils.sql_utils import (
 )
 from openhands.sdk import Event
 
+from openhands.app_server.utils.secret_redaction import redact_secrets
+
 _logger = logging.getLogger(__name__)
 
 # TODO: Add user level filtering to this class
@@ -240,12 +242,16 @@ class SQLEventCallbackService(EventCallbackService):
             stored_result = StoredEventCallbackResult(**result.model_dump())
         except Exception as exc:
             _logger.exception(f'Exception in callback {callback.id}', stack_info=True)
+            # Exception text routinely carries the credential that failed — a
+            # rejected token echoed back, an auth header in a request repr. It is
+            # persisted here and read back through the API, so it outlives the
+            # conversation that produced it and reaches a wider audience.
             stored_result = StoredEventCallbackResult(
                 status=EventCallbackResultStatus.ERROR,
                 event_callback_id=callback.id,
                 event_id=event.id,
                 conversation_id=conversation_id,
-                detail=str(exc),
+                detail=redact_secrets(str(exc)),
             )
         self.db_session.add(stored_result)
 
