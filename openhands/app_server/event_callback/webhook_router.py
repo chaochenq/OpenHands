@@ -67,6 +67,8 @@ event_service_dependency = depends_event_service()
 app_conversation_info_service_dependency = depends_app_conversation_info_service()
 jwt_dependency = depends_jwt_service()
 app_mode = get_global_config().app_mode
+from openhands.app_server.utils.secret_redaction import redact_secrets
+
 _logger = logging.getLogger(__name__)
 
 # Bound the state lookup: it now sits on a per-request authentication path, so a
@@ -628,7 +630,11 @@ def _import_all_tools():
             try:
                 importlib.import_module(name)
             except ImportError as e:
-                _logger.error(f"Warning: Could not import subpackage '{name}': {e}")
+                # Import errors carry paths and, on a misconfigured install,
+                # values from the environment they failed to read.
+                _logger.error(
+                    "Warning: Could not import subpackage '%s': %s", name, redact_secrets(str(e))
+                )
 
 
 _import_all_tools()

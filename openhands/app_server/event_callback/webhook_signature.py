@@ -43,8 +43,14 @@ PROVIDER_SIGNATURE_HEADERS: dict[str, tuple[str, str]] = {
     'github': ('X-Hub-Signature-256', 'hmac_sha256_hex'),
     'bitbucket': ('X-Hub-Signature', 'hmac_sha256_hex'),
     'gitlab': ('X-Gitlab-Token', 'shared_token'),
-    'jira': ('X-Atlassian-Webhook-Identifier', 'shared_token'),
 }
+
+# Jira is deliberately ABSENT. Its only per-request header,
+# X-Atlassian-Webhook-Identifier, is a webhook registration id visible in the
+# Jira UI — not a secret. Treating it as one would accept any forged Jira
+# payload from anyone who can read that id, which is worse than not accepting
+# Jira webhooks at all. Add Jira only with a real shared secret or an IP
+# allowlist behind it.
 TIMESTAMP_HEADER = 'X-Webhook-Timestamp'
 SECRET_ENV_VAR = 'OPENHANDS_WEBHOOK_SIGNING_SECRET'
 

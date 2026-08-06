@@ -13,6 +13,7 @@ usable credential to disk. Where the two conflict, prefer masking.
 
 from __future__ import annotations
 
+import logging
 import re
 
 REDACTION_MARKER = '[REDACTED]'
@@ -67,3 +68,36 @@ def redact_secrets(text: str | None) -> str | None:
 def redact_mapping(values: dict[str, object]) -> dict[str, object]:
     """Redact every string value in a flat mapping (e.g. log `extra=`)."""
     return {k: (redact_secrets(v) if isinstance(v, str) else v) for k, v in values.items()}
+
+
+class SecretRedactingFilter(logging.Filter):
+    """Redact credentials from every log record passing through a logger.
+
+    Wiring redaction call-by-call cannot satisfy "filter agent tool output
+    before logging": any `logger.*` added later bypasses it, and the failure is
+    silent. A filter on the handler covers every path by construction, including
+    the ones nobody remembered.
+
+    Both the format string and its args are redacted, because a credential
+    usually arrives through `%s` interpolation rather than in the literal.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if isinstance(record.msg, str):
+            record.msg = redact_secrets(record.msg)
+        if record.args:
+            if isinstance(record.args, dict):
+                record.args = redact_mapping(record.args)
+            else:
+                record.args = tuple(
+                    redact_secrets(a) if isinstance(a, str) else a for a in record.args
+                )
+        return True  # never drop a record; redaction must not cost observability
+
+
+def install_secret_redaction(logger: logging.Logger | None = None) -> None:
+    """Attach the redacting filter once to `logger` (root when omitted)."""
+    target = logger or logging.getLogger()
+    if any(isinstance(f, SecretRedactingFilter) for f in target.filters):
+        return
+    target.addFilter(SecretRedactingFilter())

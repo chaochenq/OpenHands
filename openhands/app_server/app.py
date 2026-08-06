@@ -45,11 +45,18 @@ def combine_lifespans(*lifespans):
     return combined_lifespan
 
 
+from openhands.app_server.utils.secret_redaction import install_secret_redaction
+
 lifespans = [mcp_app.lifespan]
 app_lifespan_ = get_app_lifespan_service()
 if app_lifespan_:
     lifespans.append(app_lifespan_.lifespan)
 
+
+# Redaction is installed at the root logger, not call-by-call: any logger.* added
+# later would otherwise bypass it silently, and agent tool output is
+# attacker-reachable in both directions.
+install_secret_redaction()
 
 app = FastAPI(
     title='OpenHands',
