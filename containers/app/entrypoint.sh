@@ -8,9 +8,12 @@ if [[ $NO_SETUP == "true" ]]; then
   exit 0
 fi
 
+# The container no longer runs as root: the runtime user is created at build
+# time in the Dockerfile. Root-only setup is skipped rather than fatal, so the
+# unprivileged image starts normally instead of exiting 1.
 if [ "$(id -u)" -ne 0 ]; then
-  echo "The OpenHands entrypoint.sh must run as root"
-  exit 1
+  echo "Entrypoint running as non-root ($(whoami)); skipping root-only setup."
+  NO_SETUP="${NO_SETUP:-true}"
 fi
 
 if [ -z "$SANDBOX_USER_ID" ]; then
@@ -29,7 +32,11 @@ if [[ "$SANDBOX_USER_ID" -eq 0 ]]; then
   "$@"
 else
   echo "Setting up enduser with id $SANDBOX_USER_ID"
-  if id "enduser" &>/dev/null; then
+  if [ "$(id -u)" -ne 0 ]; then
+    # Unprivileged container: the enduser was created at build time and none of
+    # the useradd/usermod/chown work below is permitted or needed here.
+    echo "Running as non-root; skipping user creation."
+  elif id "enduser" &>/dev/null; then
     echo "User enduser already exists. Skipping creation."
   else
     if ! useradd -l -m -u $SANDBOX_USER_ID -s /bin/bash enduser; then
@@ -42,7 +49,9 @@ else
       fi
     fi
   fi
-  usermod -aG openhands enduser
+  if [ "$(id -u)" -eq 0 ]; then
+    usermod -aG openhands enduser
+  fi
   # get the user group of /var/run/docker.sock and set openhands to that group
   DOCKER_SOCKET_GID=$(stat -c '%g' /var/run/docker.sock)
   echo "Docker socket group id: $DOCKER_SOCKET_GID"

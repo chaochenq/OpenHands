@@ -44,7 +44,7 @@ ENV SANDBOX_LOCAL_RUNTIME_URL=http://host.docker.internal
 ENV USE_HOST_NETWORK=false
 ENV WORKSPACE_BASE=/opt/workspace_base
 ENV OPENHANDS_BUILD_VERSION=$OPENHANDS_BUILD_VERSION
-ENV SANDBOX_USER_ID=0
+ENV SANDBOX_USER_ID=42420
 ENV FILE_STORE=local
 ENV FILE_STORE_PATH=/.openhands
 ENV INIT_GIT_IN_EMPTY_WORKSPACE=1
@@ -70,6 +70,11 @@ RUN useradd -l -m -u $OPENHANDS_USER_ID --gid $OPENHANDS_USER_ID -s /bin/bash op
     usermod -aG openhands openhands
 RUN chown -R openhands:openhands /app && chmod -R 770 /app
 RUN chown -R openhands:openhands $WORKSPACE_BASE && chmod -R 770 $WORKSPACE_BASE
+# Pre-create the runtime user at BUILD time so the entrypoint no longer needs
+# root to do it. Runs while the build is still root, before the USER drop.
+RUN useradd -l -m -u $SANDBOX_USER_ID -s /bin/bash enduser && \
+    usermod -aG openhands enduser && \
+    chown -R openhands:openhands $WORKSPACE_BASE
 USER openhands
 
 ENV VIRTUAL_ENV=/app/.venv \
@@ -100,7 +105,9 @@ RUN find /app \! -group openhands -exec chgrp openhands {} +
 COPY --chown=openhands:openhands --chmod=770 --from=frontend-builder /app/build ./frontend/build
 COPY --chown=openhands:openhands --chmod=770 ./containers/app/entrypoint.sh /app/entrypoint.sh
 
-USER root
+# The container runs unprivileged. The runtime user is created at build time
+# above, so the entrypoint no longer needs root to create it.
+USER openhands
 
 WORKDIR /app
 
