@@ -10,6 +10,10 @@ class StoredOfflineToken(Base):
 
     user_id: Mapped[str] = mapped_column(String(255), primary_key=True)
     offline_token: Mapped[str] = mapped_column(String, nullable=False)
+    # Application-level lifetime. Nullable only so pre-existing rows migrate
+    # without a backfill; OfflineTokenStore.load_token treats NULL as expired,
+    # so a legacy token is retired on first read rather than living forever.
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=text('CURRENT_TIMESTAMP'), nullable=False
     )
