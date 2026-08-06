@@ -91,3 +91,5 @@ app.add_middleware(
     RateLimitMiddleware,
     rate_limiter=InMemoryRateLimiter(requests=10, seconds=1),
 )
+
+# Redaction is installed at the root logger; see utils/secret_redaction.py.
