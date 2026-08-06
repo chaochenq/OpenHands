@@ -43,7 +43,12 @@ PROVIDER_SIGNATURE_HEADERS: dict[str, tuple[str, str]] = {
     'github': ('X-Hub-Signature-256', 'hmac_sha256_hex'),
     'bitbucket': ('X-Hub-Signature', 'hmac_sha256_hex'),
     'gitlab': ('X-Gitlab-Token', 'shared_token'),
-    'jira': ('X-Atlassian-Connect-Content-Hash', 'sha256_body_hex'),
+    # Jira's X-Atlassian-Connect-Content-Hash is an UNKEYED digest of the body:
+    # anyone who can send the body can compute it, so it proves integrity in
+    # transit and nothing about the sender. Verifying it alone would accept any
+    # forged Jira payload. Jira therefore authenticates with a keyed MAC over
+    # its own secret, like the other providers.
+    'jira': ('X-Atlassian-Webhook-Signature', 'hmac_sha256_hex'),
 }
 
 TIMESTAMP_HEADER = 'X-Webhook-Timestamp'
@@ -173,12 +178,6 @@ def _verify_provider_signature(scheme: str, secret: str, value: str, body: bytes
         return hmac.compare_digest(value, f'{_SIGNATURE_PREFIX}{digest}')
     if scheme == 'shared_token':
         return hmac.compare_digest(value, secret)
-    if scheme == 'sha256_body_hex':
-        # Atlassian Connect sends SHA-256 of the raw body. It authenticates the
-        # BODY only, not the sender, so it is kept behind the same per-provider
-        # secret check and never treated as proof of origin on its own.
-        digest = hashlib.sha256(body).hexdigest()
-        return hmac.compare_digest(value.lower(), digest)
     return False
 
 
@@ -201,6 +200,14 @@ async def verify_webhook_signature(request: Request) -> None:
         if not _verify_provider_signature(scheme, secret, value, body):
             _logger.warning('Rejected %s webhook: signature did not verify', name)
             raise _reject(f'{name} signature did not verify')
+
+        # Provider payloads get replay detection too. Returning here — as this
+        # path used to — meant an authentic provider delivery could be captured
+        # and resent indefinitely, since the native path's replay cache was
+        # never reached. The provider signature is body-derived, so it is a
+        # sound idempotency key exactly as the native one is.
+        if not _claim_signature(f'{name}:{value}', time.time()):
+            raise _reject(f'duplicate {name} delivery (replayed signature)')
         return
 
     signature = request.headers.get(SIGNATURE_HEADER)
