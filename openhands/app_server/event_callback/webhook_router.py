@@ -69,6 +69,11 @@ jwt_dependency = depends_jwt_service()
 app_mode = get_global_config().app_mode
 _logger = logging.getLogger(__name__)
 
+# Bound the state lookup: it now sits on a per-request authentication path, so a
+# slow sandbox service must not hold the request open indefinitely. A timeout is
+# treated as "not RUNNING" like any other lookup failure.
+_SANDBOX_STATE_LOOKUP_TIMEOUT_SECONDS = 2.0
+
 
 def _classify_error_type(error_message: str | None) -> str:
     """Classify conversation error into broad categories for dashboard filtering.
@@ -267,7 +272,25 @@ async def valid_sandbox(
         # paused or torn down, letting a holder keep driving webhook callbacks —
         # saving events and triggering agent automation — against a workspace
         # nobody is watching. Authenticate the key AND the state it depends on.
-        sandbox_info = await sandbox_service.get_sandbox(sandbox_record.id)
+        # Fail CLOSED if the lookup itself fails. Letting the exception escape
+        # would return 500, which both skips the check and hands a key holder a
+        # way to tell "sandbox paused" (403) from "service degraded" (500) — so
+        # a captured key could be replayed until the moment the check recovers.
+        try:
+            sandbox_info = await asyncio.wait_for(
+                sandbox_service.get_sandbox(sandbox_record.id),
+                timeout=_SANDBOX_STATE_LOOKUP_TIMEOUT_SECONDS,
+            )
+        except Exception as exc:
+            _logger.error(
+                'Sandbox state lookup failed for %s (%s); denying callback',
+                sandbox_record.id,
+                type(exc).__name__,
+            )
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN, detail='Sandbox is not accepting callbacks'
+            ) from None
+
         if sandbox_info is None or sandbox_info.status != SandboxStatus.RUNNING:
             observed = getattr(getattr(sandbox_info, 'status', None), 'value', 'MISSING')
             _logger.warning(
