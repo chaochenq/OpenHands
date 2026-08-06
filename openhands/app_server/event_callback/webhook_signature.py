@@ -43,16 +43,24 @@ PROVIDER_SIGNATURE_HEADERS: dict[str, tuple[str, str]] = {
     'github': ('X-Hub-Signature-256', 'hmac_sha256_hex'),
     'bitbucket': ('X-Hub-Signature', 'hmac_sha256_hex'),
     'gitlab': ('X-Gitlab-Token', 'shared_token'),
+    'jira': ('X-Atlassian-Connect-Content-Hash', 'sha256_body_hex'),
 }
 
-# Jira is deliberately ABSENT. Its only per-request header,
-# X-Atlassian-Webhook-Identifier, is a webhook registration id visible in the
-# Jira UI — not a secret. Treating it as one would accept any forged Jira
-# payload from anyone who can read that id, which is worse than not accepting
-# Jira webhooks at all. Add Jira only with a real shared secret or an IP
-# allowlist behind it.
 TIMESTAMP_HEADER = 'X-Webhook-Timestamp'
 SECRET_ENV_VAR = 'OPENHANDS_WEBHOOK_SIGNING_SECRET'
+
+# Each provider gets its OWN secret. Sharing one across providers is not merely
+# untidy — it is exploitable: the `shared_token` scheme transmits the secret
+# verbatim in a header, so anyone who can register a GitLab webhook reads the
+# secret and can then forge GitHub and Bitbucket HMAC signatures, which are
+# supposed to be unforgeable. The weakest provider's scheme would set the
+# strength of every other provider's.
+PROVIDER_SECRET_ENV_VARS: dict[str, str] = {
+    'github': 'OPENHANDS_WEBHOOK_SECRET_GITHUB',
+    'bitbucket': 'OPENHANDS_WEBHOOK_SECRET_BITBUCKET',
+    'gitlab': 'OPENHANDS_WEBHOOK_SECRET_GITLAB',
+    'jira': 'OPENHANDS_WEBHOOK_SECRET_JIRA',
+}
 
 # A signed request older than this is refused even when the signature is
 # valid, so a payload captured off the wire has a bounded window of use.
@@ -139,6 +147,25 @@ def _provider_signature(request: Request) -> tuple[str, str, str] | None:
     return None
 
 
+def _provider_secret(provider: str) -> str:
+    """The secret for one provider. Fails closed when it is not configured."""
+    env_var = PROVIDER_SECRET_ENV_VARS.get(provider)
+    secret = os.environ.get(env_var, '') if env_var else ''
+    if not secret:
+        _logger.error(
+            'Webhook signing secret for %s is not configured; refusing webhook. '
+            'Set %s to enable %s webhook processing.',
+            provider,
+            env_var,
+            provider,
+        )
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail='Webhook signature verification is not configured',
+        )
+    return secret
+
+
 def _verify_provider_signature(scheme: str, secret: str, value: str, body: bytes) -> bool:
     """Constant-time check of a provider signature. Unknown scheme -> False."""
     if scheme == 'hmac_sha256_hex':
@@ -146,6 +173,12 @@ def _verify_provider_signature(scheme: str, secret: str, value: str, body: bytes
         return hmac.compare_digest(value, f'{_SIGNATURE_PREFIX}{digest}')
     if scheme == 'shared_token':
         return hmac.compare_digest(value, secret)
+    if scheme == 'sha256_body_hex':
+        # Atlassian Connect sends SHA-256 of the raw body. It authenticates the
+        # BODY only, not the sender, so it is kept behind the same per-provider
+        # secret check and never treated as proof of origin on its own.
+        digest = hashlib.sha256(body).hexdigest()
+        return hmac.compare_digest(value.lower(), digest)
     return False
 
 
@@ -163,7 +196,7 @@ async def verify_webhook_signature(request: Request) -> None:
         # A third-party payload authenticates with ITS scheme, not ours. Still
         # deny-by-default: no configured secret means refuse, never accept.
         name, scheme, value = provider
-        secret = _signing_secret()
+        secret = _provider_secret(name)
         body = await request.body()
         if not _verify_provider_signature(scheme, secret, value, body):
             _logger.warning('Rejected %s webhook: signature did not verify', name)
