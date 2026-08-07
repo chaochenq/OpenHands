@@ -35,3 +35,15 @@ hex diff.
 Review pinned actions monthly, and immediately on notice of an upstream security
 release. A pin is not a substitute for patching: it makes the version explicit,
 which means a stale pin stays stale until someone moves it deliberately.
+
+## Verifying a pinned SHA
+
+A pin is only as good as the review that placed it. Before changing one, confirm
+the new SHA is reachable from the upstream tag it claims to represent:
+
+    git ls-remote https://github.com/<owner>/<repo> refs/tags/<tag>
+
+A SHA that no upstream ref points at is not a pin — it is an arbitrary commit,
+and it may never have been reviewed by the action's maintainers. Record the tag
+the SHA was resolved from in the trailing comment so the next reviewer can repeat
+the check without guessing which release was intended.
