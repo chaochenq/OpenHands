@@ -47,3 +47,15 @@ A SHA that no upstream ref points at is not a pin — it is an arbitrary commit,
 and it may never have been reviewed by the action's maintainers. Record the tag
 the SHA was resolved from in the trailing comment so the next reviewer can repeat
 the check without guessing which release was intended.
+
+## Integrity verification, not just pinning
+
+A pinned SHA fixes *which* commit runs; it does not prove the commit is the one
+the maintainers published. For actions that handle credentials or publish
+artifacts, verify the tag signature before adopting a new SHA:
+
+    git verify-tag <tag>            # upstream signed the release
+    gh attestation verify <artifact> --repo <owner>/<repo>
+
+An unsigned upstream is not a blocker, but it is a fact worth recording next to
+the pin so the next reviewer knows the pin is the only control in force.
