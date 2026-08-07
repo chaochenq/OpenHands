@@ -29,7 +29,7 @@ jobs:
         timeout-minutes: 30
         steps:
             - name: Run QA Changes
-              uses: OpenHands/extensions/plugins/qa-changes@main
+              uses: OpenHands/extensions/plugins/qa-changes@709f230e75005851cc08ffe3b374b17498b3e2ef # main
               with:
                   llm-model: litellm_proxy/openai/gpt-5.5
                   llm-base-url: https://llm-proxy.app.all-hands.dev

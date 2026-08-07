@@ -11,4 +11,4 @@ jobs:
   pr-title:
     permissions:
       pull-requests: write
-    uses: OpenHands/release-actions/.github/workflows/pr-title.yml@main
+    uses: OpenHands/release-actions/.github/workflows/pr-title.yml@d44b3e5019c49cd983f71fd5e52b671446bf70d6 # main
