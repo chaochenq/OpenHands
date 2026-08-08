@@ -15,11 +15,6 @@ concurrency:
   group: npm-publish-ui
   cancel-in-progress: false
 
-# Least-privilege default: these workflows only read the repository.
-# Any job needing more must opt in explicitly at the job level.
-permissions:
-  contents: read
-
 jobs:
   check-version:
     name: Check if version has changed
