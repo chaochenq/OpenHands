@@ -10,6 +10,7 @@ on:
 # Any job needing more must opt in explicitly at the job level.
 permissions:
   contents: read
+  actions: read
 
 jobs:
   check-package-versions:
